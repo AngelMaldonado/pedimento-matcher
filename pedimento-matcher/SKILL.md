@@ -476,7 +476,9 @@ pregunta hecha, con `pregunta`, `opciones`, `respuesta`), y
 (abajo) importan la misma funcion, nunca pueden divergir en el texto. Las 3
 fuentes mecanicas que recorre (ver bug corregido mas abajo):
 1. Pares de `diff["pares"]` con `needs_gate_matching` (confianza baja, o
-   partida/seccion sin contraparte) -- una pregunta por par.
+   partida/seccion sin contraparte -- este ultimo caso trae `alcance` con
+   solo `seccion`, sin `partida`; `gate_server.py` lo maneja explicitamente,
+   sin asumir que siempre hay partida) -- una pregunta por par.
 2. `patrones_sistemicos` con `needs_gate: true` -- una pregunta por patron,
    agrupando todas las partidas que comparte (con `valor_actual`/
    `valor_propuesto`/`recomienda_propuesto` estandarizados en
@@ -484,6 +486,9 @@ fuentes mecanicas que recorre (ver bug corregido mas abajo):
    conocer el detalle de cada tipo de patron).
 3. `contradicciones_previo_factura` con `needs_gate: true` que ningun
    patron ya cubrio -- una pregunta por contradiccion suelta.
+4. `pink_elephants` (juicio humano/agente de Paso 7, ver abajo) con
+   `campo` + `descripcion` -- una pregunta por entrada, reusando el
+   hallazgo ya existente de ese campo/partida (dice/debe_decir/fuente).
 
 **Bug real corregido (post v0.0.3):** la primera version de
 `construir_preguntas` tenia las 6 preguntas del piloto hardcodeadas
@@ -493,15 +498,38 @@ otras partidas en contradiccion) no encontraba esas claves exactas y
 `gate_server.py` nunca llegaba a levantarse; el humano terminaba
 respondiendo por chat en vez de la interfaz web, que es justo lo que el
 diseño queria evitar. Ahora el servidor web se abre siempre, sin importar
-cuantas preguntas produzca el diff real.
+cuantas preguntas produzca el diff real. De paso, auditoria completa del
+resto del pipeline encontro y corrigio mas hardcoding especifico del
+piloto:
+- `gate_server.py` truena (evidencia `undefined`) en el caso "Seccion sin
+  Partida" de arriba -- corregido, `campo_evidencia_para_ui` y el JS
+  manejan explicitamente alcance sin `partida`.
+- `render_evidencia.py` asumia `dpi=200` fijo (`SCALE = 200/72.0`) para
+  ubicar los recuadros -- ahora calcula el escalado real por pagina
+  (`ancho de imagen / ancho de pagina en puntos`), correcto sin importar
+  el `--dpi` real usado en Paso 3/5.
+- El patron sistemico de `pais_origen` disparaba solo para `dice == "CHN"`
+  -- ahora `valor_constante_declarado()` detecta el valor mas repetido
+  (>=80% de las Secciones con evidencia) sin asumir cual va a ser; el
+  `tipo` del patron incluye el valor detectado.
+- `render_reporte_html.py` tenia una frase fija en la tabla "Revisados y
+  sin discrepancia" asumiendo que la causa siempre era "codigo de
+  distribuidor en Previo" -- ahora generico, remite a la columna "Motivo".
+- El mecanismo `hallazgo_sospechoso`/`marcado_sospechoso` (badge, tarjeta
+  resumen) habia quedado huerfano tras la generalizacion -- reconectado
+  via `pink_elephants` (punto 4 de arriba), en vez de dejarlo muerto.
+- `gate_server.py` duplicaba a mano la tupla de campos del checklist para
+  el mini-resumen de Previo -- ahora importa `CHECKLIST` de
+  `diff_partidas_secciones.py` (menos `descripcion`/`fraccion_arancelaria`).
 
-**Limitación conocida que sigue sin generalizarse:** hallazgos "huelen mal"
-descubiertos por juicio humano al leer los 4 JSON con atención (el
-`pink_elephants` de Paso 7, ej. el lote con formato nunca antes visto de
-P47 en el piloto) no tienen fuente mecánica -- `pink_elephants` sigue
-vacío por diseño salvo que alguien lo llene a mano. Si nadie lo llena, esos
-casos quedan como hallazgos normales (jerarquía Previo>Factura por
-defecto), sin pasar por un gate.
+**`pink_elephants` sigue siendo juicio humano/agente, no mecanico:**
+sigue vacio por diseño salvo que alguien lo llene a mano leyendo los 4
+JSON con atencion (ej. "este lote tiene un formato que no se parece a
+ningun otro en el dataset"). La diferencia post-fix es que SI alguien lo
+llena -- `{"campo": "lote", "descripcion": "..."}` en el `par` correspondiente
+de `diff/diff_vN.json` -- ahora SI produce una pregunta real en
+`gate_server.py`/`apply_gates.py`, en vez de quedar sin ningun camino para
+llegar a un gate.
 
 **Interfaz web (recomendada sobre AskUserQuestion crudo):**
 `scripts/gate_server.py <directorio> [--port 8765] [--no-browser]` levanta
@@ -529,27 +557,30 @@ evitar ese patrón. Limitación conocida: si se cierra la pestaña a medias, no
 hay estado persistido -- hay que volver a correr `gate_server.py` desde cero
 (las respuestas ya dadas no se guardan hasta contestar la última pregunta).
 
-**Corrida real sobre el piloto (con `construir_preguntas` generico):** 5
-preguntas — 1 matching (Sección 37, confianza media) + 2 patrones (país de
-origen, 11 partidas; NP-código-distribuidor, 16 partidas) + 2
-contradicciones individuales sueltas (`np` de P32, `np` de P43 — el lote
-"sospechoso" de P47 ya no genera pregunta, ver limitación de arriba: era
-`pink_elephant`, no mecánico). Respuestas usadas: confirmar Sección 37,
-usar el país real de Previo/Factura para los 11 de país de origen (opción
-"mantener el valor ya vigente", que es la jerarquía por defecto), usar el
-MPN de Factura para los 16 de NP-distribuidor, usar Factura para P32 y P43.
-30 partidas afectadas por alguna resolución (27 de los 2 patrones + 2
-contradicciones individuales + el par de matching confirmado; nótese que
-ahora TODAS las ramas de un patrón —incluida "mantener el valor
-actual"— quedan explícitamente registradas en `resoluciones_aplicadas`,
-corrigiendo un hueco de la versión anterior donde sólo la rama "cambiar"
-quedaba trazada).
+**Corrida real sobre el piloto (con `construir_preguntas` genérico):** 6
+preguntas, exactamente las mismas del piloto original — 1 matching
+(Sección 37, confianza media) + 2 patrones (país de origen, detectado
+dinámicamente como "CHN", 11 partidas; NP-código-distribuidor, 16
+partidas) + 2 contradicciones individuales sueltas (`np` de P32, `np` de
+P43) + 1 `pink_elephant` (lote "sospechoso" de P47, reagregado a mano a
+`diff/diff_v1.json` para restaurar la corrida exacta bajo el sistema
+genérico). Respuestas usadas: confirmar Sección 37, usar el país real de
+Previo/Factura para los 11 de país de origen (opción "mantener el valor ya
+vigente", que es la jerarquía por defecto), usar el MPN de Factura para
+los 16 de NP-distribuidor, usar Factura para P32 y P43, marcar sospechoso
+el lote de P47. Resultado: **byte-idéntico al de la versión hardcodeada**
+— 160 hallazgos finales, 17 resueltos, 1 marcado sospechoso, 31 partidas
+afectadas por alguna resolución (nótese que ahora TODAS las ramas de un
+patrón —incluida "mantener el valor actual"— quedan explícitamente
+registradas en `resoluciones_aplicadas`, corrigiendo un hueco de la
+versión anterior donde sólo la rama "cambiar" quedaba trazada).
 
-Nota histórica: `gates/respuestas_v1.json` (v0.0.1–v0.0.3) usa claves de
-la versión hardcodeada anterior (`matching_seccion_37`,
-`hallazgo_lote_p47`, etc.) y ya no es compatible con el
-`construir_preguntas` genérico — se conserva como registro histórico, no
-como respuestas reejecutables.
+Nota histórica: `gates/respuestas_v1.json` (v0.0.1–v0.0.3) y
+`respuestas_v5.json` (borrador intermedio sin el `pink_elephant`) usan
+esquemas de claves que ya no son compatibles con el `construir_preguntas`
+genérico actual — se conservan/conservaron como registro histórico, no
+como respuestas reejecutables. `respuestas_v6.json` es el equivalente
+vigente.
 
 ## Paso 9 — Render de evidencia (merge diff+gates, collages con recuadro real)
 
