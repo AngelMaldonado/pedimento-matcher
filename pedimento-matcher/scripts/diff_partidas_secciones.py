@@ -306,13 +306,27 @@ DISTRIBUTOR_CODE_RE = re.compile(r"^[A-Z]?\d{3,4}[-\s]?[A-Z]?[-\s]?[A-Z0-9]{2,3}
 def detectar_patrones_sistemicos(resultados):
     """Agrupa hallazgos/contradicciones que se repiten con la misma forma en
     muchas partidas -- para que no queden enterrados como N items sueltos
-    dentro de la lista plana de 53 pares. No reemplaza los hallazgos
+    dentro de la lista plana de pares. No reemplaza los hallazgos
     individuales (siguen ahi), solo los agrupa para lectura humana.
+
+    Cada patron trae `partidas_afectadas` en forma estandar -- {partida,
+    valor_actual, fuente_actual, valor_propuesto, fuente_propuesto} -- para
+    que Paso 8 (gate_definitions.construir_preguntas) pueda armar la
+    pregunta y su resolucion de forma generica, sin conocer el detalle de
+    cada tipo de patron. `campo` (el campo del checklist afectado) y
+    `recomienda_propuesto` (si la opcion "usar_propuesto" es la
+    recomendada) tambien son parte de ese contrato.
     """
     patrones = []
 
     pais_afectadas = [
-        {"partida": p["partida"], "dice": h["dice"], "debe_decir": h["debe_decir"]}
+        {
+            "partida": p["partida"],
+            "valor_actual": h["debe_decir"],
+            "fuente_actual": h["fuente_debe_decir"],
+            "valor_propuesto": h["dice"],
+            "fuente_propuesto": "proforma",
+        }
         for p in resultados
         for h in p["hallazgos"]
         if h["campo"] == "pais_origen" and h["dice"] == "CHN"
@@ -321,19 +335,27 @@ def detectar_patrones_sistemicos(resultados):
         patrones.append(
             {
                 "tipo": "pais_origen_siempre_CHN_en_proforma",
+                "campo": "pais_origen",
                 "detalle": (
-                    "La Proforma declara pais_origen='CHN' en las 53 Secciones (ver Paso 5), "
+                    "La Proforma declara pais_origen='CHN' en (casi) todas las Secciones, "
                     "pero para estas partidas Previo y/o Factura tienen evidencia real de un "
                     "pais distinto -- posible declaracion incorrecta de origen a nivel Proforma, "
                     "no un error aislado por partida."
                 ),
                 "partidas_afectadas": pais_afectadas,
+                "recomienda_propuesto": False,
                 "needs_gate": True,
             }
         )
 
     np_distribuidor = [
-        {"partida": p["partida"], "np_previo": c["valor_previo"], "np_factura": c["valor_factura"]}
+        {
+            "partida": p["partida"],
+            "valor_actual": c["valor_previo"],
+            "fuente_actual": "previo",
+            "valor_propuesto": c["valor_factura"],
+            "fuente_propuesto": "factura",
+        }
         for p in resultados
         for c in p["contradicciones_previo_factura"]
         if c["campo"] == "np" and DISTRIBUTOR_CODE_RE.match(str(c["valor_previo"]).upper().strip())
@@ -342,6 +364,7 @@ def detectar_patrones_sistemicos(resultados):
         patrones.append(
             {
                 "tipo": "np_previo_parece_codigo_distribuidor_no_mpn_fabricante",
+                "campo": "np",
                 "detalle": (
                     "En estas partidas, el campo 'np' de Previo tiene forma de codigo interno "
                     "de distribuidor/almacen (ej. LCSC 'C123456' o codigos tipo '3434-A-C04-001'), "
@@ -352,6 +375,7 @@ def detectar_patrones_sistemicos(resultados):
                     "posiblemente en bloque dado el volumen."
                 ),
                 "partidas_afectadas": np_distribuidor,
+                "recomienda_propuesto": True,
                 "needs_gate": True,
             }
         )

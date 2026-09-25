@@ -89,21 +89,13 @@ def main():
     diff = json.load(open(diff_path))
     respuestas_doc = json.load(open(respuestas_path))
     respuestas = respuestas_doc["respuestas"]
-    by_partida = {p["partida"]: p for p in diff["pares"] if p["partida"] is not None}
 
-    preguntas = {p["clave"]: p for p in construir_preguntas(matching, diff)}
+    preguntas = construir_preguntas(matching, diff)
 
-    def validar(clave):
-        preg = preguntas[clave]
-        resp = respuestas.get(clave)
-        if resp not in preg["opciones"]:
-            gate_no_implementado(clave, resp)
-        return resp
-
-    def registrar_gate(preg, resp, patron=None):
+    def registrar_gate(preg, resp):
         entry = {"tipo": preg["tipo"]}
         if preg["tipo"] == "patron_sistemico":
-            entry["patron"] = patron
+            entry["patron"] = preg["patron_tipo"]
             entry["partidas_afectadas"] = preg["alcance"]["partidas_afectadas"]
         else:
             entry["alcance"] = preg["alcance"]
@@ -112,118 +104,70 @@ def main():
         entry["respuesta"] = etiqueta_opcion(preg, resp)
         gates.append(entry)
 
+    def resolver_matching(preg, resp):
+        alcance = preg["alcance"]
+        if preg["tipo"] == "matching_confianza_media":
+            resoluciones.append(
+                {
+                    "tipo": "matching",
+                    "partida": alcance["partida"],
+                    "seccion": alcance["seccion"],
+                    "confirmado": resp == "confirmar",
+                }
+            )
+        # matching_sin_par no cambia ningun campo -- el hallazgo sintetico
+        # "falta/sobra" de Paso 7 ya aparece siempre en hallazgos_finales;
+        # la respuesta queda registrada en 'gates' para trazabilidad.
+
+    def resolver_patron(preg, resp):
+        if resp != "usar_propuesto" and resp != "usar_actual":
+            return  # caso_por_caso: no se resuelve en bloque, queda como Paso 7 lo dejo
+        usar_propuesto = resp == "usar_propuesto"
+        for a in preg["_afectadas"]:
+            resoluciones.append(
+                {
+                    "tipo": "patron_sistemico",
+                    "patron": preg["patron_tipo"],
+                    "partida": a["partida"],
+                    "campo": preg["campo"],
+                    "debe_decir_anterior": a["valor_actual"],
+                    "debe_decir_final": a["valor_propuesto"] if usar_propuesto else a["valor_actual"],
+                    "fuente_final": a["fuente_propuesto"] if usar_propuesto else a["fuente_actual"],
+                    "motivo": preg["pregunta"],
+                }
+            )
+
+    def resolver_contradiccion(preg, resp):
+        if resp == "sin_resolver":
+            return  # no se resuelve -- queda como Paso 7 lo dejo (previo por jerarquia)
+        fuente = "previo" if resp == "usar_previo" else "factura"
+        resoluciones.append(
+            {
+                "tipo": "contradiccion_individual",
+                "partida": preg["alcance"]["partida"],
+                "campo": preg["campo"],
+                "debe_decir_final": preg["_valores"][resp],
+                "fuente_final": fuente,
+                "motivo": preg["pregunta"],
+            }
+        )
+
+    RESOLVERES = {
+        "matching_confianza_media": resolver_matching,
+        "matching_sin_par": resolver_matching,
+        "patron_sistemico": resolver_patron,
+        "contradiccion_individual": resolver_contradiccion,
+    }
+
     gates = []
     resoluciones = []
 
-    # --- Gate 1: matching Partida 37 <-> Seccion 37 (confianza media) ---
-    par37 = next(p for p in matching["pares"] if p["needs_gate"])
-    preg = preguntas["matching_seccion_37"]
-    resp = validar("matching_seccion_37")
-    registrar_gate(preg, resp)
-    resoluciones.append(
-        {
-            "tipo": "matching",
-            "partida": par37["partida"],
-            "seccion": par37["seccion"],
-            "confirmado": resp == "confirmar",
-        }
-    )
-
-    # --- Gate 2: patron np-distribuidor ---
-    pat_np = next(p for p in diff["patrones_sistemicos"] if p["tipo"] == "np_previo_parece_codigo_distribuidor_no_mpn_fabricante")
-    preg = preguntas["patron_np_distribuidor"]
-    resp = validar("patron_np_distribuidor")
-    registrar_gate(preg, resp, patron=pat_np["tipo"])
-    if resp == "usar_factura":
-        for a in pat_np["partidas_afectadas"]:
-            resoluciones.append(
-                {
-                    "tipo": "patron_sistemico",
-                    "patron": pat_np["tipo"],
-                    "partida": a["partida"],
-                    "campo": "np",
-                    "debe_decir_anterior": a["np_previo"],
-                    "debe_decir_final": a["np_factura"],
-                    "fuente_final": "factura",
-                    "motivo": "Previo probablemente capturo codigo de distribuidor, no el MPN.",
-                }
-            )
-
-    # --- Gate 3: patron pais_origen ---
-    pat_pais = next(p for p in diff["patrones_sistemicos"] if p["tipo"] == "pais_origen_siempre_CHN_en_proforma")
-    preg = preguntas["patron_pais_origen"]
-    resp = validar("patron_pais_origen")
-    registrar_gate(preg, resp, patron=pat_pais["tipo"])
-    if resp == "usar_previo_factura":
-        for a in pat_pais["partidas_afectadas"]:
-            resoluciones.append(
-                {
-                    "tipo": "patron_sistemico",
-                    "patron": pat_pais["tipo"],
-                    "partida": a["partida"],
-                    "campo": "pais_origen",
-                    "debe_decir_final": a["debe_decir"],
-                    "fuente_final": "previo_o_factura (ya resuelto en Paso 7, gate solo confirma)",
-                    "motivo": "Se confirma el pais real en vez de aceptar el CHN constante de Proforma.",
-                }
-            )
-
-    # --- Gate 4: individual np P32 ---
-    p32 = by_partida[32]
-    c32 = next(c for c in p32["contradicciones_previo_factura"] if c["campo"] == "np")
-    preg = preguntas["individual_np_p32"]
-    resp = validar("individual_np_p32")
-    registrar_gate(preg, resp)
-    if resp == "usar_factura":
-        resoluciones.append(
-            {
-                "tipo": "contradiccion_individual",
-                "partida": 32,
-                "campo": "np",
-                "debe_decir_anterior": c32["valor_previo"],
-                "debe_decir_final": c32["valor_factura"],
-                "fuente_final": "factura",
-                "motivo": "Texto nativo de PDF (Factura) mas confiable que lectura de etiqueta fisica para 1 caracter ambiguo.",
-            }
-        )
-
-    # --- Gate 5: individual np P43 ---
-    p43 = by_partida[43]
-    c43 = next(c for c in p43["contradicciones_previo_factura"] if c["campo"] == "np")
-    preg = preguntas["individual_np_p43"]
-    resp = validar("individual_np_p43")
-    registrar_gate(preg, resp)
-    if resp == "usar_factura":
-        resoluciones.append(
-            {
-                "tipo": "contradiccion_individual",
-                "partida": 43,
-                "campo": "np",
-                "debe_decir_anterior": c43["valor_previo"],
-                "debe_decir_final": c43["valor_factura"],
-                "fuente_final": "factura",
-                "motivo": "'6S0M' no tiene forma de identificador valido, probable extraccion fallida de la foto de Previo.",
-            }
-        )
-
-    # --- Gate 6: lote sospechoso P47 ---
-    p47 = by_partida[47]
-    h47 = next(h for h in p47["hallazgos"] if h["campo"] == "lote")
-    preg = preguntas["hallazgo_lote_p47"]
-    resp = validar("hallazgo_lote_p47")
-    registrar_gate(preg, resp)
-    if resp == "usar_previo_marcar_proforma_sospechoso":
-        resoluciones.append(
-            {
-                "tipo": "hallazgo_sospechoso",
-                "partida": 47,
-                "campo": "lote",
-                "debe_decir_final": h47["debe_decir"],
-                "fuente_final": "previo (ya resuelto en Paso 7, gate solo confirma)",
-                "valor_proforma_marcado_sospechoso": h47["dice"],
-                "motivo": "El valor de Proforma no tiene formato reconocible; se usa Previo y se deja constancia para revisar la extraccion de la Proforma.",
-            }
-        )
+    for preg in preguntas:
+        resp = respuestas.get(preg["clave"])
+        if resp not in preg["opciones"]:
+            gate_no_implementado(preg["clave"], resp)
+        registrar_gate(preg, resp)
+        RESOLVERES[preg["tipo"]](preg, resp)
 
     salida = {
         "version": "gates_v1",
