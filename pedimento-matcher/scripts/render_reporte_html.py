@@ -150,6 +150,11 @@ button.row-action { font-size: 12.5px; padding: 4px 9px; border-radius: 5px; bor
 button.row-action:hover { background: #f0f2f5; }
 button.row-action.btn-delete { color: #a11c1c; border-color: #f0c4c2; }
 button.row-action.btn-restore { color: #0f7a3d; border-color: #bfe3cd; }
+button.row-action.btn-edit { color: #1a56db; border-color: #c7d7f5; }
+button.row-action.btn-save-edit { color: #0f7a3d; border-color: #bfe3cd; }
+input.edit-input { font-size: 14px; padding: 5px 7px; border: 1.5px solid #1a56db; border-radius: 4px; width: 100%; margin-bottom: 5px; font-family: inherit; }
+.edit-actions { display: flex; gap: 6px; }
+.edited-badge { display: inline-block; font-size: 10px; font-weight: 700; color: #a15c00; background: #fff2d9; border-radius: 8px; padding: 1px 6px; margin-right: 5px; vertical-align: middle; }
 .deleted-panel { margin-top: 14px; background: #fff; border: 1px solid #e2e4e9; border-radius: 8px; padding: 12px 18px; font-size: 14px; }
 .deleted-panel h3 { margin: 0 0 8px 0; font-size: 15px; }
 .deleted-panel ul { margin: 0; padding-left: 18px; }
@@ -227,7 +232,87 @@ function restoreRow(id) {
 function restoreAllRows() {
   loadDeletedIds().forEach(function(id) { restoreRow(id); });
 }
+
+var LS_KEY_EDITS = 'pedimento_matcher_editados_v1';
+
+function loadEdits() {
+  try {
+    var raw = localStorage.getItem(LS_KEY_EDITS);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) { return {}; }
+}
+function saveEdits(edits) {
+  try { localStorage.setItem(LS_KEY_EDITS, JSON.stringify(edits)); } catch (e) {}
+}
+function renderDebeCell(id, valor, editado) {
+  var cell = document.getElementById('debe-cell-' + id);
+  cell.innerHTML = '';
+  if (editado) {
+    var badge = document.createElement('span');
+    badge.className = 'edited-badge';
+    badge.title = 'Valor editado manualmente (original: ' + cell.getAttribute('data-original') + ')';
+    badge.textContent = 'editado';
+    cell.appendChild(badge);
+  }
+  var span = document.createElement('span');
+  span.className = 'debe-val';
+  span.id = 'debe-val-' + id;
+  span.textContent = valor;
+  cell.appendChild(span);
+}
+function editarValor(id) {
+  var cell = document.getElementById('debe-cell-' + id);
+  var span = document.getElementById('debe-val-' + id);
+  var valorActual = span.textContent;
+  cell.innerHTML = '';
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'edit-input';
+  input.id = 'edit-input-' + id;
+  input.value = valorActual;
+  cell.appendChild(input);
+  var actions = document.createElement('div');
+  actions.className = 'edit-actions';
+  var btnSave = document.createElement('button');
+  btnSave.className = 'row-action btn-save-edit';
+  btnSave.textContent = 'Guardar';
+  btnSave.onclick = function() { guardarEdicion(id); };
+  var btnCancel = document.createElement('button');
+  btnCancel.className = 'row-action';
+  btnCancel.textContent = 'Cancelar';
+  btnCancel.onclick = function() { renderDebeCell(id, valorActual, isEdited(id)); };
+  actions.appendChild(btnSave);
+  actions.appendChild(btnCancel);
+  cell.appendChild(actions);
+  input.focus();
+  input.select();
+}
+function isEdited(id) {
+  return Object.prototype.hasOwnProperty.call(loadEdits(), id);
+}
+function guardarEdicion(id) {
+  var input = document.getElementById('edit-input-' + id);
+  if (!input) return;
+  var nuevoValor = input.value;
+  var cell = document.getElementById('debe-cell-' + id);
+  var original = cell.getAttribute('data-original');
+  var edits = loadEdits();
+  if (nuevoValor === original) {
+    delete edits[id];
+  } else {
+    edits[id] = nuevoValor;
+  }
+  saveEdits(edits);
+  renderDebeCell(id, nuevoValor, Object.prototype.hasOwnProperty.call(edits, id));
+}
+function finalizarEdicionesAbiertas() {
+  document.querySelectorAll('input.edit-input').forEach(function(input) {
+    guardarEdicion(input.id.replace('edit-input-', ''));
+  });
+}
+
 function guardarCambios() {
+  finalizarEdicionesAbiertas();
   var clone = document.documentElement.cloneNode(true);
   clone.querySelectorAll('.col-acciones').forEach(function(el) { el.remove(); });
   clone.querySelectorAll('tr.deleted').forEach(function(el) { el.remove(); });
@@ -253,6 +338,13 @@ document.addEventListener('DOMContentLoaded', function() {
     if (row) row.classList.add('deleted');
   });
   renderDeletedPanel();
+
+  var edits = loadEdits();
+  Object.keys(edits).forEach(function(id) {
+    if (document.getElementById('debe-cell-' + id)) {
+      renderDebeCell(id, edits[id], true);
+    }
+  });
 });
 """
 
@@ -378,9 +470,12 @@ def main() -> None:
           <td>{s_cell}</td>
           <td>{badges}{campo_txt}</td>
           <td class="val-dice">{dice_txt}</td>
-          <td class="val-debe">{debe_txt}</td>
+          <td class="val-debe" id="debe-cell-{row_id}" data-original="{debe_txt}"><span class="debe-val" id="debe-val-{row_id}">{debe_txt}</span></td>
           <td>{ev_cell}</td>
-          <td class="col-acciones"><button class="row-action btn-delete" onclick="deleteRow('{row_id}')">Eliminar</button></td>
+          <td class="col-acciones">
+            <button class="row-action btn-edit" onclick="editarValor('{row_id}')">Editar</button>
+            <button class="row-action btn-delete" onclick="deleteRow('{row_id}')">Eliminar</button>
+          </td>
         </tr>""")
 
     resueltos_rows = []
