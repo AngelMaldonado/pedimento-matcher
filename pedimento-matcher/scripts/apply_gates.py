@@ -152,11 +152,31 @@ def main():
             }
         )
 
+    def resolver_sospechoso(preg, resp):
+        if resp == "investigar_mas":
+            return  # no se resuelve -- queda como Paso 7 lo dejo
+        hallazgo = preg["_hallazgo"]
+        resolucion = {
+            "tipo": "hallazgo_sospechoso",
+            "partida": preg["alcance"]["partida"],
+            "campo": preg["campo"],
+            "motivo": preg["pregunta"],
+            "valor_proforma_marcado_sospechoso": hallazgo["dice"],
+        }
+        if resp == "marcar_sospechoso":
+            resolucion["debe_decir_final"] = hallazgo["debe_decir"]
+            resolucion["fuente_final"] = hallazgo["fuente_debe_decir"]
+        else:  # dejar_proforma
+            resolucion["debe_decir_final"] = hallazgo["dice"]
+            resolucion["fuente_final"] = "proforma"
+        resoluciones.append(resolucion)
+
     RESOLVERES = {
         "matching_confianza_media": resolver_matching,
         "matching_sin_par": resolver_matching,
         "patron_sistemico": resolver_patron,
         "contradiccion_individual": resolver_contradiccion,
+        "hallazgo_sospechoso": resolver_sospechoso,
     }
 
     gates = []

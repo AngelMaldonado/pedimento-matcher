@@ -32,6 +32,7 @@ import json
 import os
 import re
 import sys
+from collections import Counter
 
 CHECKLIST = [
     "np",
@@ -303,6 +304,27 @@ def diff_sin_match(item, tipo):
 DISTRIBUTOR_CODE_RE = re.compile(r"^[A-Z]?\d{3,4}[-\s]?[A-Z]?[-\s]?[A-Z0-9]{2,3}[-\s]?\d{3}$|^C\d{5,7}$")
 
 
+def valor_constante_declarado(resultados, campo, min_soporte=3, min_fraccion=0.8):
+    """Si (casi) todas las Secciones con evidencia declaran el MISMO valor
+    para `campo`, devuelve ese valor -- candidato a "la Proforma trae un
+    valor fijo sin verificar realmente cada partida" (el caso real del
+    piloto fue pais_origen='CHN' en 53/53, pero el valor y el campo pueden
+    ser otros en otra corrida -- nunca se asume cual). None si los valores
+    estan repartidos (dataset real, sin ese patron)."""
+    dices = [
+        h["dice"]
+        for p in resultados
+        for h in p["hallazgos"]
+        if h["campo"] == campo and h["dice"] not in (None, "sin_evidencia")
+    ]
+    if len(dices) < min_soporte:
+        return None
+    valor, conteo = Counter(dices).most_common(1)[0]
+    if conteo / len(dices) < min_fraccion:
+        return None
+    return valor
+
+
 def detectar_patrones_sistemicos(resultados):
     """Agrupa hallazgos/contradicciones que se repiten con la misma forma en
     muchas partidas -- para que no queden enterrados como N items sueltos
@@ -319,6 +341,7 @@ def detectar_patrones_sistemicos(resultados):
     """
     patrones = []
 
+    valor_pais_constante = valor_constante_declarado(resultados, "pais_origen")
     pais_afectadas = [
         {
             "partida": p["partida"],
@@ -329,18 +352,18 @@ def detectar_patrones_sistemicos(resultados):
         }
         for p in resultados
         for h in p["hallazgos"]
-        if h["campo"] == "pais_origen" and h["dice"] == "CHN"
+        if h["campo"] == "pais_origen" and valor_pais_constante is not None and h["dice"] == valor_pais_constante
     ]
     if pais_afectadas:
         patrones.append(
             {
-                "tipo": "pais_origen_siempre_CHN_en_proforma",
+                "tipo": f"pais_origen_siempre_{valor_pais_constante}_en_proforma",
                 "campo": "pais_origen",
                 "detalle": (
-                    "La Proforma declara pais_origen='CHN' en (casi) todas las Secciones, "
-                    "pero para estas partidas Previo y/o Factura tienen evidencia real de un "
-                    "pais distinto -- posible declaracion incorrecta de origen a nivel Proforma, "
-                    "no un error aislado por partida."
+                    f"La Proforma declara pais_origen='{valor_pais_constante}' en (casi) todas "
+                    "las Secciones, pero para estas partidas Previo y/o Factura tienen evidencia "
+                    "real de un pais distinto -- posible declaracion incorrecta de origen a nivel "
+                    "Proforma, no un error aislado por partida."
                 ),
                 "partidas_afectadas": pais_afectadas,
                 "recomienda_propuesto": False,

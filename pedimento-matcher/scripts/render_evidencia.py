@@ -45,10 +45,18 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _bbox_common import locate_text_bbox_px, words_by_page  # noqa: E402
 
-SCALE = 200 / 72.0  # dpi=200 usado en Paso 3/5 (verificado contra tamaño real de pages/*.png)
 TARGET_WIDTH = 1300
 PREVIO_PHOTO_HEIGHT = 700
 FONT = ImageFont.load_default()
+
+
+def scale_for(page_img, page_words_entry):
+    """Pixeles-por-punto-PDF real de esta pagina: ancho de la imagen ya
+    renderizada (Paso 3/5, a cualquier dpi) entre el ancho de pagina en
+    puntos que reporta `pdftotext -bbox`. Nunca asume un dpi fijo -- si
+    Paso 3/5 corre con --dpi distinto de 200, esto sigue dando el recuadro
+    en la posicion correcta."""
+    return page_img.width / page_words_entry["width_pt"]
 
 
 def find_latest(pattern_dir_glob, filename_tmpl):
@@ -242,9 +250,10 @@ def main() -> None:
         page_img = pages.get(os.path.join(proforma_dir, prow["pagina_png"]))
         target_box = None
         if has_evidencia(dice):
-            words_page = proforma_words[prow["pagina"] - 1]["words"]
+            page_entry = proforma_words[prow["pagina"] - 1]
             target_box = locate_text_bbox_px(
-                words_page, prow["bbox_px"][1], prow["bbox_px"][3], SCALE, str(dice)
+                page_entry["words"], prow["bbox_px"][1], prow["bbox_px"][3],
+                scale_for(page_img, page_entry), str(dice)
             )
         proforma_crop, tuvo_recuadro_proforma = crop_with_optional_box(page_img, prow["bbox_px"], target_box)
         proforma_crop = resize_to_width(proforma_crop, TARGET_WIDTH)
@@ -263,9 +272,10 @@ def main() -> None:
             fpage_img = pages.get(os.path.join(invoice_dir, irow["pagina_png"]))
             fbox = None
             if has_evidencia(debe_decir):
-                fwords_page = invoice_words[irow["pagina"] - 1]["words"]
+                fpage_entry = invoice_words[irow["pagina"] - 1]
                 fbox = locate_text_bbox_px(
-                    fwords_page, irow["bbox_px"][1], irow["bbox_px"][3], SCALE, str(debe_decir)
+                    fpage_entry["words"], irow["bbox_px"][1], irow["bbox_px"][3],
+                    scale_for(fpage_img, fpage_entry), str(debe_decir)
                 )
             factura_crop, tuvo_recuadro_factura = crop_with_optional_box(fpage_img, irow["bbox_px"], fbox)
             factura_crop = resize_to_width(factura_crop, TARGET_WIDTH)

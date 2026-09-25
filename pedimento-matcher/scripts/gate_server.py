@@ -38,6 +38,13 @@ from urllib.parse import urlparse, parse_qs
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gate_definitions import construir_preguntas, etiqueta_opcion  # noqa: E402
 from merge_diff_gates import find_latest, find_latest_flat  # noqa: E402
+from diff_partidas_secciones import CHECKLIST  # noqa: E402
+
+# Mini-checklist mostrado junto a la evidencia de Previo en la UI de gates --
+# el CHECKLIST completo menos descripcion (verboso) y fraccion_arancelaria
+# (casi nunca tiene evidencia de Previo). Si CHECKLIST cambia, esto se
+# actualiza solo en vez de quedar una tupla duplicada y desincronizada.
+CAMPOS_PREVIO_MINI = [c for c in CHECKLIST if c not in ("descripcion", "fraccion_arancelaria")]
 
 
 def cargar_contexto(directorio):
@@ -88,24 +95,36 @@ def siguiente_version_respuestas(directorio):
 
 
 def campo_evidencia_para_ui(ctx, alcance):
-    """Arma, por partida, las URLs de media que la UI necesita: crop de
-    Factura, crop de Proforma (via el mapeo Partida->Seccion de Paso 6) y el
-    numero de fotos de Previo (la UI pide cada foto por indice a /media/previo)."""
-    partidas = alcance.get("partidas_afectadas") or ([alcance["partida"]] if "partida" in alcance else [])
+    """Arma, por partida (o por seccion si no hay partida -- ej. una Seccion
+    sin contraparte en Factura), las URLs de media que la UI necesita: crop
+    de Factura, crop de Proforma (via el mapeo Partida->Seccion de Paso 6) y
+    el numero de fotos de Previo (la UI pide cada foto por indice a
+    /media/previo)."""
     out = {}
-    for partida in partidas:
-        seccion = alcance.get("seccion") or ctx["partida_to_seccion"].get(partida)
-        previo = ctx["previo_by_partida"].get(partida, {})
-        merged_entry = ctx["merged"]["partidas"].get(f"P{partida}", {})
-        out[str(partida)] = {
+
+    if "partidas_afectadas" in alcance:
+        items = [(partida, None) for partida in alcance["partidas_afectadas"]]
+    elif "partida" in alcance:
+        items = [(alcance["partida"], alcance.get("seccion"))]
+    elif "seccion" in alcance:
+        items = [(None, alcance["seccion"])]
+    else:
+        items = []
+
+    for partida, seccion_fija in items:
+        seccion = seccion_fija or (ctx["partida_to_seccion"].get(partida) if partida is not None else None)
+        previo = ctx["previo_by_partida"].get(partida, {}) if partida is not None else {}
+        merged_entry = ctx["merged"]["partidas"].get(f"P{partida}", {}) if partida is not None else {}
+        clave = str(partida) if partida is not None else f"s{seccion}"
+        out[clave] = {
             "partida": partida,
             "seccion": seccion,
-            "tiene_crop_factura": partida in ctx["invoice_by_partida"],
+            "tiene_crop_factura": partida is not None and partida in ctx["invoice_by_partida"],
             "tiene_crop_proforma": seccion in ctx["proforma_by_seccion"] if seccion else False,
             "n_fotos_previo": len(merged_entry.get("fotos", [])),
             "previo_checklist": {
                 k: previo.get(k)
-                for k in ("np", "marca", "modelo", "codigo_producto", "lote", "numero_serie", "pais_origen", "cantidad")
+                for k in CAMPOS_PREVIO_MINI
                 if k in previo
             },
             "previo_notas": previo.get("notas_calidad", []),
@@ -234,7 +253,10 @@ function fotoPrevio(partida, i) { return '/media/previo/' + partida + '/' + i; }
 
 function renderEvidenciaPartida(ev) {
   var html = '<div class="evidencia">';
-  html += '<h3>Evidencia &middot; Partida ' + ev.partida + (ev.seccion ? (' / Seccion ' + ev.seccion) : '') + '</h3>';
+  var titulo = ev.partida != null
+    ? ('Partida ' + ev.partida + (ev.seccion ? (' / Seccion ' + ev.seccion) : ''))
+    : ('Seccion ' + ev.seccion + ' (sin Partida correspondiente en Factura)');
+  html += '<h3>Evidencia &middot; ' + titulo + '</h3>';
 
   if (ev.tiene_crop_factura) {
     html += '<h4 class="ev-section">Factura</h4>';

@@ -165,6 +165,31 @@ def _pregunta_contradiccion(partida, c):
     }
 
 
+def _pregunta_pink_elephant(partida, hallazgo):
+    """`pink_elephants` (Paso 7) es juicio humano/agente, no mecanico -- ver
+    SKILL.md. Contrato minimo por entrada: {"campo": <campo del checklist>,
+    "descripcion": <por que se ve raro>}. Se reusa el hallazgo YA existente
+    de ese campo (dice/debe_decir/fuente_debe_decir) en vez de duplicar esos
+    valores en el pink_elephant -- si no hay hallazgo para ese campo en esa
+    partida, no hay nada que resolver (se descarta en construir_preguntas)."""
+    campo = hallazgo["campo"]
+    return {
+        "clave": f"sospechoso_p{partida}_{campo}",
+        "tipo": "hallazgo_sospechoso",
+        "campo": campo,
+        "alcance": {"partida": partida},
+        "pregunta": f"{hallazgo['_descripcion']} Como lo tratamos?",
+        "opciones": {
+            "marcar_sospechoso": f"Usar '{hallazgo['debe_decir']}' y marcar el valor de Proforma como sospechoso",
+            "investigar_mas": "Investigar mas antes de decidir (no cerrar el gate ahora)",
+            "dejar_proforma": f"Usar el valor de Proforma tal cual ({hallazgo['dice']})",
+        },
+        "recomendada": "marcar_sospechoso",
+        "evidencia": {"partida": partida},
+        "_hallazgo": hallazgo,
+    }
+
+
 def construir_preguntas(matching, diff):
     """Devuelve la lista de preguntas de Paso 8 para ESTA corrida, en el
     orden en que se presentan -- tantas como el matching/diff realmente
@@ -201,5 +226,16 @@ def construir_preguntas(matching, diff):
             if (partida, c["campo"]) in cubiertos_por_patron:
                 continue
             preguntas.append(_pregunta_contradiccion(partida, c))
+
+    for par in diff.get("pares", []):
+        partida = par.get("partida")
+        hallazgos_by_campo = {h["campo"]: h for h in par.get("hallazgos", [])}
+        for pe in par.get("pink_elephants", []) or []:
+            campo = pe.get("campo")
+            hallazgo = hallazgos_by_campo.get(campo)
+            if not campo or hallazgo is None:
+                continue  # sin campo o sin hallazgo correspondiente, no hay nada que resolver
+            hallazgo = dict(hallazgo, _descripcion=pe.get("descripcion", "Valor de Proforma con forma inusual."))
+            preguntas.append(_pregunta_pink_elephant(partida, hallazgo))
 
     return preguntas

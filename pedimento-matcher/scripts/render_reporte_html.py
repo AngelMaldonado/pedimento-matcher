@@ -468,9 +468,9 @@ def main() -> None:
   </div>
 
   <h2>Revisados y sin discrepancia</h2>
-  <p class="resueltos">Estos {len(resueltos)} casos pasaron por una revision humana agrupada, pero al aplicar la
-     resolucion el valor final coincidio con lo que la Proforma ya decia -- el problema real
-     estaba en Previo (codigo de distribuidor en vez de MPN de fabricante), no en la Proforma.
+  <p class="resueltos">Estos {len(resueltos)} casos pasaron por una revision humana, pero al aplicar la
+     resolucion el valor final coincidio con lo que la Proforma ya decia -- ver la columna
+     "Motivo de la revision" para el porque de cada uno.
      No requieren correccion; se listan aparte para trazabilidad, no como pendientes.</p>
   <div class="resueltos">
   <table>
