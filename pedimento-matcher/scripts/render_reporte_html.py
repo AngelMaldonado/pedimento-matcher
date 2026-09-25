@@ -185,6 +185,41 @@ document.getElementById('modal').addEventListener('click', closeModal);
 document.getElementById('modalImg').addEventListener('click', function(e) { e.stopPropagation(); });
 document.getElementById('modalTitle').addEventListener('click', function(e) { e.stopPropagation(); });
 
+var DOCUMENTOS = {
+  factura: { mime: 'application/pdf', elId: 'b64-factura', filename: null },
+  proforma: { mime: 'application/pdf', elId: 'b64-proforma', filename: null },
+  previozip: { mime: 'application/zip', elId: 'b64-previozip', filename: null }
+};
+var blobUrlCache = {};
+function base64ToBlob(b64, mime) {
+  var byteChars = atob(b64);
+  var byteArray = new Uint8Array(byteChars.length);
+  for (var i = 0; i < byteChars.length; i++) byteArray[i] = byteChars.charCodeAt(i);
+  return new Blob([byteArray], { type: mime });
+}
+function abrirDocumento(key) {
+  var cfg = DOCUMENTOS[key];
+  if (!blobUrlCache[key]) {
+    var b64 = document.getElementById(cfg.elId).textContent;
+    blobUrlCache[key] = URL.createObjectURL(base64ToBlob(b64, cfg.mime));
+  }
+  var url = blobUrlCache[key];
+  if (cfg.filename) {
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = cfg.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } else {
+    window.open(url, '_blank');
+  }
+  return false;
+}
+document.addEventListener('DOMContentLoaded', function() {
+  DOCUMENTOS.previozip.filename = PREVIO_ZIP_FILENAME;
+});
+
 var LS_KEY = 'pedimento_matcher_eliminados_v1';
 
 function loadDeletedIds() {
@@ -489,9 +524,10 @@ def main() -> None:
           <td>{fold_ascii_html_escape(r.get('motivo'))}</td>
         </tr>""")
 
-    factura_rel = os.path.relpath(invoice_pdf_path, os.path.join(base_dir, "artifacts"))
-    proforma_rel = os.path.relpath(proforma_pdf_path, os.path.join(base_dir, "artifacts"))
-    previo_zip_rel = os.path.relpath(previo_zip_path, os.path.join(base_dir, "artifacts"))
+    factura_b64_doc = b64_file(invoice_pdf_path)
+    proforma_b64_doc = b64_file(proforma_pdf_path)
+    previo_zip_b64_doc = b64_file(previo_zip_path)
+    previo_zip_filename = fold_ascii_html_escape(os.path.basename(previo_zip_path))
 
     generado = datetime.now().strftime("%Y-%m-%d %H:%M")
     safe_trafico = re.sub(r"[^A-Za-z0-9_-]+", "_", header["trafico"]).strip("_") or "reporte"
@@ -514,9 +550,9 @@ def main() -> None:
     Generado: {generado}
   </div>
   <div class="links">
-    <a href="{factura_rel}" target="_blank">Factura fuente (PDF)<span class="open-icon">&#8599;</span></a>
-    <a href="{proforma_rel}" target="_blank">Proforma/Pedimento fuente (PDF)<span class="open-icon">&#8599;</span></a>
-    <a href="{previo_zip_rel}">Fotos de Previo (.zip, {len(merged['partidas'])} partidas)<span class="open-icon">&#8599;</span></a>
+    <a href="#" onclick="return abrirDocumento('factura')">Factura fuente (PDF)<span class="open-icon">&#8599;</span></a>
+    <a href="#" onclick="return abrirDocumento('proforma')">Proforma/Pedimento fuente (PDF)<span class="open-icon">&#8599;</span></a>
+    <a href="#" onclick="return abrirDocumento('previozip')">Fotos de Previo (.zip, {len(merged['partidas'])} partidas)<span class="open-icon">&#8599;</span></a>
   </div>
 </header>
 
@@ -583,6 +619,9 @@ def main() -> None:
 
 <div class="hidden-store">
   {''.join(hidden_store_html)}
+  <script type="application/octet-stream" id="b64-factura">{factura_b64_doc}</script>
+  <script type="application/octet-stream" id="b64-proforma">{proforma_b64_doc}</script>
+  <script type="application/octet-stream" id="b64-previozip">{previo_zip_b64_doc}</script>
 </div>
 
 <div class="overlay" id="modal">
@@ -591,7 +630,7 @@ def main() -> None:
   <img id="modalImg" src="">
 </div>
 
-<script>var REPORT_FILENAME = "{export_filename}";</script>
+<script>var REPORT_FILENAME = "{export_filename}"; var PREVIO_ZIP_FILENAME = "{previo_zip_filename}";</script>
 <script>{JS}</script>
 </body>
 </html>
