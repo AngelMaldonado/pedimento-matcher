@@ -23,13 +23,13 @@ silently inferred.
 ## Install
 
 ```bash
-gh skill install <owner>/pedimento-matcher pedimento-matcher --agent claude-code
+gh skill install AngelMaldonado/pedimento-matcher pedimento-matcher --agent claude-code
 ```
 
 or with the generic [skills CLI](https://skills.sh):
 
 ```bash
-npx skills add <owner>/pedimento-matcher --skill pedimento-matcher
+npx skills add AngelMaldonado/pedimento-matcher --skill pedimento-matcher
 ```
 
 ## Requirements
@@ -50,9 +50,28 @@ argument (or no argument to use the current directory):
 /pedimento-matcher path/to/operation
 ```
 
-It runs a 10-step pipeline (preflight, Previo merge, Factura/Proforma
-parsing, matching, diff against a source-of-truth hierarchy, a human-gated
-review round with a visual web UI, evidence rendering, final HTML report).
+## Pipeline
+
+10 steps: raw parsing first, deterministic matching/diff second, a human
+only for the cases that are genuinely ambiguous, evidence-backed report
+last.
+
+```mermaid
+flowchart TD
+    A["1. Preflight<br/>detect/organize Previo, Factura, Proforma"] --> B["2. Merge Previo<br/>one package per Partida"]
+    B --> C["3. Parse Factura<br/>vision + native PDF text"]
+    B --> D["4. Analyze Previo photos<br/>vision, per Partida"]
+    C --> E["5. Parse Proforma<br/>vision + native PDF text"]
+    D --> E
+    E --> F["6. Match Partida / Seccion<br/>deterministic, scored"]
+    F --> G["7. Diff<br/>Previo > Factura > sin_evidencia"]
+    G --> H{"8. Human review<br/>web UI, only genuinely<br/>ambiguous cases"}
+    H --> I["9. Render evidence<br/>real crops/photos, no guessed boxes"]
+    I --> J["10. Final HTML report<br/>self-contained, one file"]
+
+    style H fill:#e3ecff,stroke:#1a56db
+```
+
 See `pedimento-matcher/SKILL.md` for the full step-by-step contract, design
 rationale, and a real pilot run's results.
 
