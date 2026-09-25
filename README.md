@@ -41,6 +41,34 @@ npx skills add AngelMaldonado/pedimento-matcher --skill pedimento-matcher
   Proforma/Pedimento PDF, laid out as described in the skill's Paso 1
   (Preflight).
 
+Install `poppler`:
+
+```bash
+# macOS (Homebrew)
+brew install poppler
+
+# Debian/Ubuntu
+sudo apt-get update && sudo apt-get install -y poppler-utils
+
+# Fedora/RHEL
+sudo dnf install -y poppler-utils
+
+# Arch
+sudo pacman -S poppler
+
+# Windows (Chocolatey)
+choco install poppler
+
+# Windows (Scoop)
+scoop install poppler
+```
+
+Verify it's on `PATH`:
+
+```bash
+pdftoppm -v && pdftotext -v
+```
+
 ## Usage
 
 Invoke the skill from a Claude Code session with the working directory as
